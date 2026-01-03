@@ -10,8 +10,9 @@ This Flutter application helps users track their daily expenses, manage budgets,
 ### Screenshots 📱
 | | | |
 |:---:|:---:|:---:|
-| ![Home](screenshots/home.png) | ![Statistics](screenshots/stats.png) | ![Budgets](screenshots/budgets.png) |
-| ![Details](screenshots/details.png) | ![PDF](screenshots/report.png) | |
+| ![Home](screenshots/home.png) | ![Home List](screenshots/home_list.png) | ![Budgets](screenshots/budgets.png) |
+| ![Statistics](screenshots/stats.png) | ![Details](screenshots/details.png) | ![Profile](screenshots/profile.png) |
+| ![Reports](screenshots/report.png) | ![Settings](screenshots/settings_dark.png) | |
 
 ## Features List 
 
