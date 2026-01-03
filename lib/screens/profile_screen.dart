@@ -189,7 +189,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
     try {
       // Delete from Storage
-      await storageService.deleteProfilePicture();
+      await storageService.deleteProfilePicture(user!.uid);
 
       // Update Firestore
       if (user != null) {
@@ -275,7 +275,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       radius: 70,
                       backgroundColor: Theme.of(context).primaryColor.withOpacity(0.1),
                       backgroundImage: _profilePhotoUrl != null && _profilePhotoUrl!.isNotEmpty
-                          ? NetworkImage(_profilePhotoUrl!)
+                          ? (_profilePhotoUrl!.startsWith('http') 
+                              ? NetworkImage(_profilePhotoUrl!) 
+                              : FileImage(File(_profilePhotoUrl!)) as ImageProvider)
                           : null,
                       child: _isUploading
                           ? const CircularProgressIndicator()

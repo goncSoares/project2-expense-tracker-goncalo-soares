@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
-import '../services/auth_service.dart';
+import 'package:provider/provider.dart';
+import '../providers/auth_provider.dart';
 
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key});
@@ -13,7 +14,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   final _confirmPasswordController = TextEditingController();
-  final _authService = AuthService();
+  // Service removed, using Provider
   bool _isLoading = false;
 
   @override
@@ -34,19 +35,18 @@ class _RegisterScreenState extends State<RegisterScreen> {
       return;
     }
 
-    setState(() => _isLoading = true);
-
+    // Loading handled by AuthWrapper/Provider
     try {
-      await _authService.signUpWithEmail(
+      await Provider.of<AuthProvider>(context, listen: false).signUp(
         _emailController.text.trim(),
         _passwordController.text.trim(),
       );
-      Navigator.pop(context);
+      if (mounted) Navigator.pop(context);
     } catch (e) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(e.toString())));
-    } finally {
-      setState(() => _isLoading = false);
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+           .showSnackBar(SnackBar(content: Text(e.toString())));
+      }
     }
   }
 

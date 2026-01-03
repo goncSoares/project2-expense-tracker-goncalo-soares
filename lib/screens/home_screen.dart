@@ -2,11 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/expense_provider.dart';
 import '../models/expense.dart';
+import '../models/currency.dart';
+import '../services/currency_service.dart';
 import 'expense_form_screen.dart';
 import 'expense_detail_screen.dart';
 import 'statistics_screen.dart';
 import 'profile_screen.dart';
 import 'settings_screen.dart';
+import '../providers/settings_provider.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -18,9 +21,50 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   String? _selectedCategory;
   DateTimeRange? _dateRange;
+  // _selectedCurrency moved to SettingsProvider
+  Map<String, double> _convertedAmounts = {};
+
+  @override
+  void initState() {
+    super.initState();
+  }
+  
+  // _loadPreferredCurrency removed
+
+  Future<void> _changeCurrency(String newCurrency) async {
+    // Cache clearing is handled by key change or we can clear here
+    setState(() {
+      _convertedAmounts.clear();
+    });
+    
+    await Provider.of<SettingsProvider>(context, listen: false).setCurrency(newCurrency);
+  }
+
+  Future<double> _getConvertedAmount(double amount) async {
+    final settings = Provider.of<SettingsProvider>(context, listen: false);
+    final currency = settings.currency;
+    
+    if (currency == 'EUR') return amount;
+
+    final key = '${amount}_$currency';
+    if (_convertedAmounts.containsKey(key)) {
+      return _convertedAmounts[key]!;
+    }
+
+    final converted = await CurrencyService.convert(
+      amount: amount,
+      from: 'EUR',
+      to: currency,
+    );
+
+    _convertedAmounts[key] = converted;
+    return converted;
+  }
 
   @override
   Widget build(BuildContext context) {
+    // Listen to settings changes
+    final settings = Provider.of<SettingsProvider>(context);
     final provider = Provider.of<ExpenseProvider>(context);
 
     // Filtrar despesas
@@ -39,8 +83,8 @@ class _HomeScreenState extends State<HomeScreen> {
       }).toList();
     }
 
-    // Calcular total
-    double total = filteredExpenses.fold(0, (sum, expense) => sum + expense.amount);
+    // Calcular total (em EUR)
+    double totalEUR = filteredExpenses.fold(0, (sum, expense) => sum + expense.amount);
 
     return Scaffold(
       appBar: AppBar(
@@ -101,32 +145,54 @@ class _HomeScreenState extends State<HomeScreen> {
           // Filtros
           Container(
             padding: const EdgeInsets.all(16),
-            color: Theme.of(context).primaryColor.withOpacity(0.1),
+            color: Theme.of(context).brightness == Brightness.dark 
+                ? Theme.of(context).cardColor.withOpacity(0.5)
+                : Theme.of(context).primaryColor.withOpacity(0.1),
             child: Column(
               children: [
                 // Total display
                 Card(
                   child: Padding(
                     padding: const EdgeInsets.all(16),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Text(
-                          'Total:',
-                          style: TextStyle(
-                            fontSize: 20,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        Text(
-                          '€${total.toStringAsFixed(2)}',
-                          style: TextStyle(
-                            fontSize: 24,
-                            fontWeight: FontWeight.bold,
-                            color: Theme.of(context).primaryColor,
-                          ),
-                        ),
-                      ],
+                    child: FutureBuilder<double>(
+                      future: _getConvertedAmount(totalEUR),
+                      builder: (context, snapshot) {
+                        final displayTotal = snapshot.data ?? totalEUR;
+                        final symbol = CurrencyService.getCurrencySymbol(settings.currency);
+                        
+                        return Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            const Text(
+                              'Total:',
+                              style: TextStyle(
+                                fontSize: 20,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.end,
+                              children: [
+                                if (snapshot.connectionState == ConnectionState.waiting)
+                                  const SizedBox(
+                                    width: 20,
+                                    height: 20,
+                                    child: CircularProgressIndicator(strokeWidth: 2),
+                                  )
+                                else
+                                   Text(
+                                    '$symbol${displayTotal.toStringAsFixed(2)}',
+                                    style: TextStyle(
+                                      fontSize: 24,
+                                      fontWeight: FontWeight.bold,
+                                      color: Theme.of(context).colorScheme.primary,
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ],
+                        );
+                      },
                     ),
                   ),
                 ),
@@ -138,6 +204,54 @@ class _HomeScreenState extends State<HomeScreen> {
                         label: Text(_selectedCategory ?? 'All Categories'),
                         selected: _selectedCategory != null,
                         onSelected: (_) => _showCategoryFilter(),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    // Currency Selector
+                    PopupMenuButton<String>(
+                      tooltip: 'Change Currency',
+                      onSelected: _changeCurrency,
+                      itemBuilder: (context) => Currency.popular.map((currency) {
+                        return PopupMenuItem(
+                          value: currency.code,
+                          child: Row(
+                            children: [
+                              Text(currency.flag, style: const TextStyle(fontSize: 20)),
+                              const SizedBox(width: 8),
+                              Text('${currency.code} - ${currency.name}'),
+                              if (currency.code == settings.currency)
+                                const Padding(
+                                  padding: EdgeInsets.only(left: 8),
+                                  child: Icon(Icons.check, size: 16),
+                                ),
+                            ],
+                          ),
+                        );
+                      }).toList(),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: Theme.of(context).cardColor,
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(color: Theme.of(context).dividerColor),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              Currency.getByCode(settings.currency)?.flag ?? '', 
+                              style: const TextStyle(fontSize: 18),
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              settings.currency,
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                color: Theme.of(context).colorScheme.primary,
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                     const SizedBox(width: 8),
@@ -250,12 +364,19 @@ class _HomeScreenState extends State<HomeScreen> {
                       trailing: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Text(
-                            '€${expense.amount.toStringAsFixed(2)}',
-                            style: const TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                            ),
+                          FutureBuilder<double>(
+                            future: _getConvertedAmount(expense.amount),
+                            builder: (context, snapshot) {
+                              final amount = snapshot.data ?? expense.amount;
+                              final symbol = CurrencyService.getCurrencySymbol(settings.currency);
+                              return Text(
+                                '$symbol${amount.toStringAsFixed(2)}',
+                                style: const TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              );
+                            },
                           ),
                           IconButton(
                             icon: const Icon(Icons.edit, size: 20),

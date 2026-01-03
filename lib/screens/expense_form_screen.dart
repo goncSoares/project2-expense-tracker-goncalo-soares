@@ -8,6 +8,7 @@ import '../providers/expense_provider.dart';
 import '../services/image_service.dart';
 import '../services/storage_service.dart';
 import '../services/location_service.dart';
+import 'location_detail_screen.dart';
 
 class ExpenseFormScreen extends StatefulWidget {
   final Expense? expense;
@@ -32,6 +33,7 @@ class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
   File? _receiptImage;
   String? _receiptUrl;
   Position? _currentLocation;
+  String? _locationName;
 
   final List<String> _categories = [
     'Food',
@@ -53,8 +55,8 @@ class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
       _amountController.text = widget.expense!.amount.toString();
       _selectedDate = widget.expense!.date;
       _receiptUrl = widget.expense!.receiptUrl;
+      _locationName = widget.expense!.locationName;
 
-      // Load existing location if available
       if (widget.expense!.latitude != null && widget.expense!.longitude != null) {
         _currentLocation = Position(
           latitude: widget.expense!.latitude!,
@@ -145,7 +147,7 @@ class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
       if (imageFile != null) {
         setState(() {
           _receiptImage = imageFile;
-          _receiptUrl = null; // Clear old URL if picking new image
+          _receiptUrl = null;
         });
       }
     } catch (e) {
@@ -158,15 +160,14 @@ class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
   }
 
   Future<void> _getCurrentLocation() async {
+    if (_isLoading) return;
+
     setState(() => _isLoading = true);
 
     try {
-      print('Button pressed - getting location...');
-
       final position = await _locationService.getCurrentLocation();
 
       if (position != null) {
-        print('Location received: ${position.latitude}, ${position.longitude}');
         setState(() {
           _currentLocation = position;
           _isLoading = false;
@@ -174,12 +175,9 @@ class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
 
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                'Location saved!\n${position.latitude.toStringAsFixed(6)}, ${position.longitude.toStringAsFixed(6)}',
-              ),
+            const SnackBar(
+              content: Text('Location saved!'),
               backgroundColor: Colors.green,
-              duration: const Duration(seconds: 3),
             ),
           );
         }
@@ -188,49 +186,53 @@ class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text('Failed to get location'),
-              backgroundColor: Colors.red,
+              content: Text('Could not get location'),
+              backgroundColor: Colors.orange,
             ),
           );
         }
       }
     } catch (e) {
-      print('Location error: $e');
       setState(() => _isLoading = false);
-
       if (mounted) {
-        // Show error dialog with options
-        showDialog(
-          context: context,
-          builder: (context) => AlertDialog(
-            title: const Text('Location Error'),
-            content: Text(e.toString()),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('Cancel'),
-              ),
-              if (e.toString().contains('disabled'))
-                TextButton(
-                  onPressed: () async {
-                    Navigator.pop(context);
-                    await _locationService.openLocationSettings();
-                  },
-                  child: const Text('Open Settings'),
-                ),
-              if (e.toString().contains('permanently denied'))
-                TextButton(
-                  onPressed: () async {
-                    Navigator.pop(context);
-                    await _locationService.openAppSettings();
-                  },
-                  child: const Text('Open App Settings'),
-                ),
-            ],
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Location error: $e'),
+            backgroundColor: Colors.orange,
           ),
         );
       }
     }
+  }
+
+  void _openLocationDetails() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => LocationDetailScreen(
+          latitude: _currentLocation?.latitude,
+          longitude: _currentLocation?.longitude,
+          locationName: _locationName,
+          onLocationUpdated: (lat, lng, name) {
+            setState(() {
+              _currentLocation = Position(
+                latitude: lat,
+                longitude: lng,
+                timestamp: DateTime.now(),
+                accuracy: 0,
+                altitude: 0,
+                altitudeAccuracy: 0,
+                heading: 0,
+                headingAccuracy: 0,
+                speed: 0,
+                speedAccuracy: 0,
+              );
+              _locationName = name;
+            });
+          },
+        ),
+      ),
+    );
   }
 
   Future<void> _saveExpense() async {
@@ -258,36 +260,25 @@ class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
       try {
         String? uploadedReceiptUrl = _receiptUrl;
 
-        // Upload receipt image if user picked a new one
+        // Upload receipt LOCALLY if new image selected
         if (_receiptImage != null) {
-          print('Starting receipt upload...');
-
-          // Generate temporary expense ID for upload
           final tempExpenseId = widget.expense?.id ??
               DateTime.now().millisecondsSinceEpoch.toString();
 
-          print('Expense ID for upload: $tempExpenseId');
-
-          // Upload with progress tracking
-          uploadedReceiptUrl = await _storageService.uploadReceiptImage(
-            expenseId: tempExpenseId,
-            imageFile: _receiptImage!,
+          uploadedReceiptUrl = await _storageService.uploadItemImage(
+            tempExpenseId,
+            _receiptImage!,
             onProgress: (progress) {
-              print('Upload progress: ${(progress * 100).toInt()}%');
-              setState(() {
-                _uploadProgress = progress;
-              });
+              setState(() => _uploadProgress = progress);
             },
           );
 
           if (uploadedReceiptUrl == null) {
-            throw Exception('Failed to upload receipt image');
+            throw Exception('Failed to save receipt');
           }
-
-          print('Receipt uploaded successfully: $uploadedReceiptUrl');
         }
 
-        // Create expense object
+        // Create expense
         final expense = Expense(
           id: widget.expense?.id ?? '',
           category: _selectedCategory!,
@@ -297,33 +288,28 @@ class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
           ),
           date: _selectedDate,
           receiptUrl: uploadedReceiptUrl,
-          latitude: _currentLocation?.latitude,   // ← NOVO!
-          longitude: _currentLocation?.longitude, // ← NOVO!
+          latitude: _currentLocation?.latitude,
+          longitude: _currentLocation?.longitude,
+          locationName: _locationName,
         );
 
-        print('Expense object created: ${expense.toFirestore()}');
-
-        // Save to Firestore
+        // Save
         if (widget.expense == null) {
-          print('Adding new expense...');
           await provider.addExpense(expense);
-          print('Expense added successfully');
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(
-                content: Text('Expense added successfully!'),
+                content: Text('Expense added!'),
                 backgroundColor: Colors.green,
               ),
             );
           }
         } else {
-          print('Updating existing expense...');
           await provider.updateExpense(expense);
-          print('Expense updated successfully');
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(
-                content: Text('Expense updated successfully!'),
+                content: Text('Expense updated!'),
                 backgroundColor: Colors.green,
               ),
             );
@@ -332,6 +318,7 @@ class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
 
         if (mounted) Navigator.pop(context);
       } catch (e) {
+        print('Save error: $e');
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
@@ -342,9 +329,7 @@ class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
         }
       } finally {
         if (mounted) {
-          setState(() {
-            _isLoading = false;
-          });
+          setState(() => _isLoading = false);
         }
       }
     }
@@ -355,44 +340,26 @@ class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
     return Scaffold(
       appBar: AppBar(
         title: Text(widget.expense == null ? 'Add Expense' : 'Edit Expense'),
-        elevation: 0,
       ),
-      body: _isLoading
+      body: _isLoading && _uploadProgress > 0
           ? Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             const CircularProgressIndicator(),
             const SizedBox(height: 16),
-            if (_uploadProgress > 0 && _uploadProgress < 1)
-              Column(
-                children: [
-                  Text(
-                    'Uploading: ${(_uploadProgress * 100).toInt()}%',
-                    style: const TextStyle(fontSize: 16),
-                  ),
-                  const SizedBox(height: 8),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 40),
-                    child: LinearProgressIndicator(
-                      value: _uploadProgress,
-                      minHeight: 8,
-                      backgroundColor: Colors.grey[300],
-                    ),
-                  ),
-                ],
-              ),
+            Text('Uploading: ${(_uploadProgress * 100).toInt()}%'),
           ],
         ),
       )
           : SingleChildScrollView(
-        padding: const EdgeInsets.all(16.0),
+        padding: const EdgeInsets.all(16),
         child: Form(
           key: _formKey,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // Category Dropdown
+              // Category
               DropdownButtonFormField<String>(
                 value: _selectedCategory,
                 decoration: const InputDecoration(
@@ -400,23 +367,18 @@ class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
                   border: OutlineInputBorder(),
                   prefixIcon: Icon(Icons.category),
                 ),
-                items: _categories.map((category) {
-                  return DropdownMenuItem(
-                    value: category,
-                    child: Text(category),
-                  );
+                items: _categories.map((cat) {
+                  return DropdownMenuItem(value: cat, child: Text(cat));
                 }).toList(),
                 onChanged: (value) {
-                  setState(() {
-                    _selectedCategory = value;
-                  });
+                  setState(() => _selectedCategory = value);
                 },
                 validator: (value) =>
-                value == null ? 'Please select a category' : null,
+                value == null ? 'Select category' : null,
               ),
               const SizedBox(height: 16),
 
-              // Description Field
+              // Description
               TextFormField(
                 controller: _descriptionController,
                 decoration: const InputDecoration(
@@ -427,17 +389,17 @@ class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
                 maxLines: 2,
                 validator: (value) {
                   if (value == null || value.trim().isEmpty) {
-                    return 'Please enter a description';
+                    return 'Enter description';
                   }
                   if (value.trim().length < 3) {
-                    return 'Description must be at least 3 characters';
+                    return 'Min 3 characters';
                   }
                   return null;
                 },
               ),
               const SizedBox(height: 16),
 
-              // Amount Field
+              // Amount
               TextFormField(
                 controller: _amountController,
                 decoration: const InputDecoration(
@@ -449,20 +411,19 @@ class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
                 const TextInputType.numberWithOptions(decimal: true),
                 validator: (value) {
                   if (value == null || value.trim().isEmpty) {
-                    return 'Please enter an amount';
+                    return 'Enter amount';
                   }
                   final amount = double.tryParse(
-                    value.replaceAll(RegExp(r'[^\d.]'), ''),
-                  );
+                      value.replaceAll(RegExp(r'[^\d.]'), ''));
                   if (amount == null || amount <= 0) {
-                    return 'Please enter a valid amount greater than 0';
+                    return 'Enter valid amount > 0';
                   }
                   return null;
                 },
               ),
               const SizedBox(height: 16),
 
-              // Date Picker
+              // Date
               InkWell(
                 onTap: () => _selectDate(context),
                 child: InputDecorator(
@@ -473,195 +434,204 @@ class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
                   ),
                   child: Text(
                     '${_selectedDate.day}/${_selectedDate.month}/${_selectedDate.year}',
-                    style: const TextStyle(fontSize: 16),
                   ),
                 ),
               ),
               const SizedBox(height: 24),
 
-              // Location Section
+              // Location Section (IMPROVED!)
               Card(
-                elevation: 2,
                 child: Padding(
                   padding: const EdgeInsets.all(16),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Row(
+                      const Row(
                         children: [
-                          const Icon(Icons.location_on),
-                          const SizedBox(width: 8),
-                          const Text(
+                          Icon(Icons.location_on),
+                          SizedBox(width: 8),
+                          Text(
                             'Location (Optional)',
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                            ),
+                            style: TextStyle(fontWeight: FontWeight.bold),
                           ),
                         ],
                       ),
                       const SizedBox(height: 12),
 
-                      if (_currentLocation != null)
+                      if (_currentLocation != null) ...[
                         Container(
                           padding: const EdgeInsets.all(12),
                           decoration: BoxDecoration(
                             color: Colors.green.shade50,
                             borderRadius: BorderRadius.circular(8),
-                            border: Border.all(color: Colors.green.shade200),
                           ),
-                          child: Row(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              const Icon(Icons.check_circle,
-                                  color: Colors.green, size: 20),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: Text(
-                                  'Lat: ${_currentLocation!.latitude.toStringAsFixed(6)}\n'
-                                      'Lng: ${_currentLocation!.longitude.toStringAsFixed(6)}',
-                                  style: const TextStyle(fontSize: 12),
-                                ),
+                              Row(
+                                children: [
+                                  const Icon(Icons.check_circle,
+                                      color: Colors.green, size: 20),
+                                  const SizedBox(width: 8),
+                                  const Text(
+                                    'Location saved',
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.green,
+                                    ),
+                                  ),
+                                  const Spacer(),
+                                  IconButton(
+                                    icon: const Icon(Icons.close, size: 20),
+                                    onPressed: () {
+                                      setState(() {
+                                        _currentLocation = null;
+                                        _locationName = null;
+                                      });
+                                    },
+                                  ),
+                                ],
                               ),
-                              IconButton(
-                                icon: const Icon(Icons.close, size: 20),
-                                onPressed: () {
-                                  setState(() => _currentLocation = null);
-                                },
+                              if (_locationName != null) ...[
+                                const SizedBox(height: 4),
+                                Text(
+                                  _locationName!,
+                                  style: const TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ],
+                              const SizedBox(height: 4),
+                              Text(
+                                '${_currentLocation!.latitude.toStringAsFixed(6)}, ${_currentLocation!.longitude.toStringAsFixed(6)}',
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.grey,
+                                ),
                               ),
                             ],
                           ),
-                        )
-                      else
-                        Text(
-                          'No location attached',
-                          style: TextStyle(color: Colors.grey[600]),
                         ),
-
-                      const SizedBox(height: 8),
-
-                      Center(
-                        child: ElevatedButton.icon(
-                          onPressed: _getCurrentLocation,
-                          icon: const Icon(Icons.my_location),
-                          label: Text(
-                            _currentLocation == null
-                                ? 'Get Current Location'
-                                : 'Update Location',
-                          ),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.blue,
-                            foregroundColor: Colors.white,
-                          ),
+                        const SizedBox(height: 12),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: ElevatedButton.icon(
+                                onPressed: _openLocationDetails,
+                                icon: const Icon(Icons.map),
+                                label: const Text('View/Edit on Map'),
+                              ),
+                            ),
+                          ],
                         ),
-                      ),
+                      ] else ...[
+                        const Text(
+                          'No location',
+                          style: TextStyle(color: Colors.grey),
+                        ),
+                        const SizedBox(height: 12),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: ElevatedButton.icon(
+                                onPressed:
+                                _isLoading ? null : _getCurrentLocation,
+                                icon: const Icon(Icons.my_location),
+                                label: const Text('Get Location'),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
                     ],
                   ),
                 ),
               ),
-              const SizedBox(height: 24),
+              const SizedBox(height: 16),
 
-              // Receipt Image Section
+              // Receipt Section
               Card(
-                elevation: 2,
                 child: Padding(
                   padding: const EdgeInsets.all(16),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Row(
+                      const Row(
                         children: [
-                          const Icon(Icons.receipt),
-                          const SizedBox(width: 8),
-                          const Text(
-                            'Receipt Image (Optional)',
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                            ),
+                          Icon(Icons.receipt),
+                          SizedBox(width: 8),
+                          Text(
+                            'Receipt (Optional)',
+                            style: TextStyle(fontWeight: FontWeight.bold),
                           ),
                         ],
                       ),
-                      const SizedBox(height: 16),
-
-                      // Image Preview
-                      Center(
-                        child: GestureDetector(
-                          onTap: _showImageSourceDialog,
-                          child: Container(
-                            width: 200,
-                            height: 200,
-                            decoration: BoxDecoration(
-                              color: Colors.grey[200],
-                              borderRadius: BorderRadius.circular(12),
-                              border: Border.all(color: Colors.grey[400]!),
+                      const SizedBox(height: 12),
+                      GestureDetector(
+                        onTap: _showImageSourceDialog,
+                        child: Container(
+                          height: 200,
+                          decoration: BoxDecoration(
+                            color: Colors.grey[200],
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: Colors.grey[400]!),
+                          ),
+                          child: _receiptImage != null
+                              ? ClipRRect(
+                            borderRadius: BorderRadius.circular(12),
+                            child: Image.file(_receiptImage!,
+                                fit: BoxFit.cover),
+                          )
+                              : _receiptUrl != null
+                              ? ClipRRect(
+                            borderRadius:
+                            BorderRadius.circular(12),
+                            child: Image.file(
+                              File(_receiptUrl!),
+                              fit: BoxFit.cover,
+                              errorBuilder:
+                                  (context, error, stackTrace) {
+                                return Column(
+                                  mainAxisAlignment:
+                                  MainAxisAlignment.center,
+                                  children: [
+                                    Icon(Icons.broken_image,
+                                        size: 40,
+                                        color: Colors.grey[400]),
+                                    const SizedBox(height: 8),
+                                    Text('Image not found',
+                                        style: TextStyle(
+                                            color:
+                                            Colors.grey[600])),
+                                  ],
+                                );
+                              },
                             ),
-                            child: _receiptImage != null
-                                ? ClipRRect(
-                              borderRadius: BorderRadius.circular(12),
-                              child: Image.file(
-                                _receiptImage!,
-                                fit: BoxFit.cover,
-                              ),
-                            )
-                                : _receiptUrl != null
-                                ? ClipRRect(
-                              borderRadius: BorderRadius.circular(12),
-                              child: Image.network(
-                                _receiptUrl!,
-                                fit: BoxFit.cover,
-                                loadingBuilder:
-                                    (context, child, loadingProgress) {
-                                  if (loadingProgress == null) return child;
-                                  return const Center(
-                                    child: CircularProgressIndicator(),
-                                  );
-                                },
-                                errorBuilder: (context, error, stackTrace) {
-                                  return const Center(
-                                    child: Icon(
-                                      Icons.error,
-                                      color: Colors.red,
-                                    ),
-                                  );
-                                },
-                              ),
-                            )
-                                : Center(
-                              child: Column(
-                                mainAxisAlignment:
-                                MainAxisAlignment.center,
-                                children: [
-                                  Icon(
-                                    Icons.add_photo_alternate,
-                                    size: 40,
-                                    color: Colors.grey[400],
-                                  ),
-                                  const SizedBox(height: 8),
-                                  Text(
-                                    'Add Receipt Photo',
-                                    style: TextStyle(
-                                      color: Colors.grey[600],
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
+                          )
+                              : Column(
+                            mainAxisAlignment:
+                            MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.add_photo_alternate,
+                                  size: 40,
+                                  color: Colors.grey[400]),
+                              const SizedBox(height: 8),
+                              Text('Tap to add photo',
+                                  style: TextStyle(
+                                      color: Colors.grey[600])),
+                            ],
                           ),
                         ),
                       ),
-
                       const SizedBox(height: 8),
-
-                      Center(
-                        child: TextButton.icon(
-                          onPressed: _showImageSourceDialog,
-                          icon: const Icon(Icons.camera_alt),
-                          label: Text(
-                            _receiptImage != null || _receiptUrl != null
-                                ? 'Change Photo'
-                                : 'Add Photo',
-                          ),
-                        ),
+                      TextButton.icon(
+                        onPressed: _showImageSourceDialog,
+                        icon: const Icon(Icons.camera_alt),
+                        label: Text(_receiptImage != null ||
+                            _receiptUrl != null
+                            ? 'Change'
+                            : 'Add Photo'),
                       ),
                     ],
                   ),
@@ -671,12 +641,9 @@ class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
 
               // Save Button
               ElevatedButton(
-                onPressed: _saveExpense,
+                onPressed: _isLoading ? null : _saveExpense,
                 style: ElevatedButton.styleFrom(
                   padding: const EdgeInsets.symmetric(vertical: 16),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(8),
-                  ),
                 ),
                 child: Text(
                   widget.expense == null

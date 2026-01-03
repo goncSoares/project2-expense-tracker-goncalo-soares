@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/expense_provider.dart';
 import '../models/expense.dart';
+import '../models/currency.dart';
+import '../services/currency_service.dart';
+import '../providers/settings_provider.dart';
 
 class StatisticsScreen extends StatefulWidget {
   const StatisticsScreen({super.key});
@@ -12,9 +15,18 @@ class StatisticsScreen extends StatefulWidget {
 
 class _StatisticsScreenState extends State<StatisticsScreen> {
   String _selectedPeriod = 'This Month';
+  // Currency state moved to SettingsProvider
+
+  @override
+  void initState() {
+    super.initState();
+  }
+  
+  // _loadPreferredCurrency removed
 
   @override
   Widget build(BuildContext context) {
+    final settings = Provider.of<SettingsProvider>(context);
     final provider = Provider.of<ExpenseProvider>(context);
 
     // Filtrar por período
@@ -36,12 +48,64 @@ class _StatisticsScreenState extends State<StatisticsScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Statistics'),
+        title: Row(
+          children: [
+            const Text('Statistics'),
+            const SizedBox(width: 12),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.2),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Text(
+                settings.currency,
+                style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+              ),
+            ),
+          ],
+        ),
         elevation: 0,
+        actions: [
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.currency_exchange),
+            tooltip: 'Change Currency',
+            onSelected: (currency) {
+              settings.setCurrency(currency);
+            },
+            itemBuilder: (context) => Currency.popular.map((currency) {
+              return PopupMenuItem(
+                value: currency.code,
+                child: Row(
+                  children: [
+                    Text(currency.flag, style: const TextStyle(fontSize: 20)),
+                    const SizedBox(width: 8),
+                    Text('${currency.code} - ${currency.name}'),
+                    if (currency.code == settings.currency)
+                      const Padding(
+                        padding: EdgeInsets.only(left: 8),
+                        child: Icon(Icons.check, size: 16),
+                      ),
+                  ],
+                ),
+              );
+            }).toList(),
+          ),
+        ],
       ),
       body: filteredExpenses.isEmpty
           ? const Center(
-        child: Text('No expenses in this period'),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.bar_chart, size: 80, color: Colors.grey),
+            SizedBox(height: 16),
+            Text(
+              'No expenses in this period',
+              style: TextStyle(fontSize: 18, color: Colors.grey),
+            ),
+          ],
+        ),
       )
           : SingleChildScrollView(
         child: Column(
@@ -61,147 +125,194 @@ class _StatisticsScreenState extends State<StatisticsScreen> {
               ),
             ),
 
-            // Total Card - CENTRALIZADO
-            Center(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Card(
-                  elevation: 4,
-                  child: Container(
-                    width: MediaQuery.of(context).size.width * 0.9,
-                    padding: const EdgeInsets.all(24),
-                    child: Column(
-                      children: [
-                        const Text(
-                          'Total Spending',
-                          style: TextStyle(
-                            fontSize: 18,
-                            color: Colors.grey,
-                          ),
+            // 🎯 TOTAL CARD - DESTACADO NO TOPO
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Card(
+                elevation: 8,
+                color: Theme.of(context).primaryColor,
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(32),
+                  child: Column(
+                    children: [
+                      const Icon(
+                        Icons.account_balance_wallet,
+                        color: Colors.white,
+                        size: 40,
+                      ),
+                      const SizedBox(height: 8),
+                      const Text(
+                        'TOTAL SPENDING',
+                        style: TextStyle(
+                          fontSize: 16,
+                          color: Colors.white70,
+                          letterSpacing: 2,
+                          fontWeight: FontWeight.bold,
                         ),
-                        const SizedBox(height: 8),
-                        Text(
-                          '€${grandTotal.toStringAsFixed(2)}',
-                          style: TextStyle(
-                            fontSize: 36,
-                            fontWeight: FontWeight.bold,
-                            color: Theme.of(context).primaryColor,
-                          ),
+                      ),
+                      const SizedBox(height: 12),
+                      FutureBuilder<double>(
+                        future: CurrencyService.convert(
+                          amount: grandTotal,
+                          from: 'EUR',
+                          to: settings.currency,
                         ),
-                        const SizedBox(height: 8),
-                        Text(
-                          '${filteredExpenses.length} transaction${filteredExpenses.length != 1 ? 's' : ''}',
-                          style: const TextStyle(
-                            fontSize: 14,
-                            color: Colors.grey,
-                          ),
+                        builder: (context, snapshot) {
+                          final displayTotal = snapshot.data ?? grandTotal;
+                          final symbol = CurrencyService.getCurrencySymbol(settings.currency);
+                          return Text(
+                            '$symbol${displayTotal.toStringAsFixed(2)}',
+                            style: const TextStyle(
+                              fontSize: 48,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.white,
+                            ),
+                          );
+                        },
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        '${filteredExpenses.length} transaction${filteredExpenses.length != 1 ? 's' : ''}',
+                        style: const TextStyle(
+                          fontSize: 14,
+                          color: Colors.white70,
                         ),
-                      ],
-                    ),
+                      ),
+                    ],
                   ),
                 ),
               ),
             ),
 
-            // Average per day - MELHORADO COM GRÁFICO
+            // 📈 DAILY SPENDING TREND - MELHORADO
             if (filteredExpenses.isNotEmpty)
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: Card(
-                  elevation: 3,
-                  child: Padding(
-                    padding: const EdgeInsets.all(20),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
+                child: FutureBuilder<double>(
+                  future: CurrencyService.convert(amount: 1, from: 'EUR', to: settings.currency),
+                  builder: (context, snapshot) {
+                    final rate = snapshot.data ?? 1.0;
+                    final symbol = CurrencyService.getCurrencySymbol(settings.currency);
+                    
+                    if (snapshot.connectionState == ConnectionState.waiting) {
+                      return const Center(child: CircularProgressIndicator());
+                    }
+
+                    return Card(
+                      elevation: 4,
+                      child: Padding(
+                        padding: const EdgeInsets.all(20),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Icon(
-                              Icons.show_chart,
-                              color: Theme.of(context).primaryColor,
-                              size: 24,
-                            ),
-                            const SizedBox(width: 8),
-                            const Text(
-                              'Daily Spending Trend',
-                              style: TextStyle(
-                                fontSize: 18,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 16),
-
-                        // Mini gráfico de linha
-                        SizedBox(
-                          height: 100,
-                          child: CustomPaint(
-                            painter: LineChartPainter(
-                              expenses: filteredExpenses,
-                              period: _selectedPeriod,
-                            ),
-                            size: Size.infinite,
-                          ),
-                        ),
-
-                        const SizedBox(height: 16),
-                        const Divider(),
-                        const SizedBox(height: 8),
-
-                        // Média por dia
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            const Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [
-                                Text(
-                                  'Average per day',
-                                  style: TextStyle(
-                                    fontSize: 16,
-                                    color: Colors.grey,
-                                  ),
+                                Row(
+                                  children: [
+                                    Icon(
+                                      Icons.show_chart,
+                                      color: Theme.of(context).primaryColor,
+                                      size: 24,
+                                    ),
+                                    const SizedBox(width: 8),
+                                    const Text(
+                                      'Daily Spending Trend',
+                                      style: TextStyle(
+                                        fontSize: 18,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ],
                                 ),
-                                SizedBox(height: 4),
                                 Text(
-                                  'In this period',
+                                  'in $symbol',
                                   style: TextStyle(
-                                    fontSize: 12,
-                                    color: Colors.grey,
+                                    color: Colors.grey[600],
+                                    fontWeight: FontWeight.w500,
                                   ),
                                 ),
                               ],
                             ),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 16,
-                                vertical: 8,
-                              ),
-                              decoration: BoxDecoration(
-                                color: Theme.of(context).primaryColor.withOpacity(0.1),
-                                borderRadius: BorderRadius.circular(8),
-                              ),
-                              child: Text(
-                                '€${_calculateAveragePerDay(filteredExpenses).toStringAsFixed(2)}',
-                                style: TextStyle(
-                                  fontSize: 24,
-                                  fontWeight: FontWeight.bold,
-                                  color: Theme.of(context).primaryColor,
+                            const SizedBox(height: 20),
+
+                            // 🎨 GRÁFICO DE LINHA
+                            SizedBox(
+                              height: 150,
+                              child: CustomPaint(
+                                painter: LineChartPainter(
+                                  expenses: filteredExpenses,
+                                  period: _selectedPeriod,
+                                  primaryColor: Theme.of(context).primaryColor,
+                                  conversionRate: rate,
+                                  currencySymbol: symbol,
                                 ),
+                                size: Size.infinite,
+                              ),
+                            ),
+
+                            const SizedBox(height: 20),
+                            const Divider(),
+                            const SizedBox(height: 12),
+
+                            // 💰 AVERAGE PER DAY - POSICIONADO MELHOR
+                            Container(
+                              padding: const EdgeInsets.all(16),
+                              decoration: BoxDecoration(
+                                color: Theme.of(context).brightness == Brightness.dark
+                                    ? Theme.of(context).cardColor
+                                    : Colors.blue.shade50,
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        'Average per day',
+                                        style: TextStyle(
+                                          fontSize: 16,
+                                          fontWeight: FontWeight.w600,
+                                          color: Theme.of(context).brightness == Brightness.dark
+                                              ? Colors.white70
+                                              : Colors.black87,
+                                        ),
+                                      ),
+                                      SizedBox(height: 4),
+                                      Text(
+                                        'In this period',
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          color: Colors.grey,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  Text(
+                                    '$symbol${(_calculateAveragePerDay(filteredExpenses) * rate).toStringAsFixed(2)}',
+                                    style: TextStyle(
+                                      fontSize: 28,
+                                      fontWeight: FontWeight.bold,
+                                      color: Theme.of(context).primaryColor,
+                                    ),
+                                  ),
+                                ],
                               ),
                             ),
                           ],
                         ),
-                      ],
-                    ),
-                  ),
+                      ),
+                    );
+                  },
                 ),
               ),
 
-            const SizedBox(height: 16),
+            const SizedBox(height: 24),
 
-            // Spending by Category
+            // 📊 SPENDING BY CATEGORY
             const Padding(
               padding: EdgeInsets.all(16),
               child: Text(
@@ -217,64 +328,93 @@ class _StatisticsScreenState extends State<StatisticsScreen> {
             ...sortedCategories.map((entry) {
               double percentage = (entry.value / grandTotal) * 100;
               return Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 16, vertical: 8),
+                child: Card(
+                  elevation: 2,
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Row(
+                          mainAxisAlignment:
+                          MainAxisAlignment.spaceBetween,
                           children: [
-                            Icon(
-                              _getCategoryIcon(entry.key),
-                              size: 20,
-                              color: _getCategoryColor(entry.key),
+                            Row(
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.all(8),
+                                  decoration: BoxDecoration(
+                                    color: _getCategoryColor(entry.key)
+                                        .withOpacity(0.2),
+                                    borderRadius:
+                                    BorderRadius.circular(8),
+                                  ),
+                                  child: Icon(
+                                    _getCategoryIcon(entry.key),
+                                    size: 24,
+                                    color: _getCategoryColor(entry.key),
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                Column(
+                                  crossAxisAlignment:
+                                  CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      entry.key,
+                                      style: const TextStyle(
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                    Text(
+                                      '${percentage.toStringAsFixed(1)}% of total',
+                                      style: const TextStyle(
+                                        fontSize: 12,
+                                        color: Colors.grey,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ],
                             ),
-                            const SizedBox(width: 8),
-                            Text(
-                              entry.key,
-                              style: const TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.w500,
+                            FutureBuilder<double>(
+                              future: CurrencyService.convert(
+                                amount: entry.value,
+                                from: 'EUR',
+                                to: settings.currency,
                               ),
+                              builder: (context, snapshot) {
+                                final amount = snapshot.data ?? entry.value;
+                                final symbol = CurrencyService.getCurrencySymbol(settings.currency);
+                                return Text(
+                                  '$symbol${amount.toStringAsFixed(2)}',
+                                  style: const TextStyle(
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                );
+                              },
                             ),
                           ],
                         ),
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.end,
-                          children: [
-                            Text(
-                              '€${entry.value.toStringAsFixed(2)}',
-                              style: const TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.bold,
-                              ),
+                        const SizedBox(height: 12),
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(10),
+                          child: LinearProgressIndicator(
+                            value: percentage / 100,
+                            minHeight: 10,
+                            backgroundColor: Colors.grey[300],
+                            valueColor: AlwaysStoppedAnimation<Color>(
+                              _getCategoryColor(entry.key),
                             ),
-                            Text(
-                              '${percentage.toStringAsFixed(1)}%',
-                              style: const TextStyle(
-                                fontSize: 12,
-                                color: Colors.grey,
-                              ),
-                            ),
-                          ],
+                          ),
                         ),
                       ],
                     ),
-                    const SizedBox(height: 8),
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(10),
-                      child: LinearProgressIndicator(
-                        value: percentage / 100,
-                        minHeight: 10,
-                        backgroundColor: Colors.grey[300],
-                        valueColor: AlwaysStoppedAnimation<Color>(
-                          _getCategoryColor(entry.key),
-                        ),
-                      ),
-                    ),
-                  ],
+                  ),
                 ),
               );
             }),
@@ -296,6 +436,7 @@ class _StatisticsScreenState extends State<StatisticsScreen> {
           _selectedPeriod = period;
         });
       },
+      selectedColor: Theme.of(context).primaryColor.withOpacity(0.3),
     );
   }
 
@@ -390,12 +531,21 @@ class _StatisticsScreenState extends State<StatisticsScreen> {
   }
 }
 
-// Custom Painter para o gráfico de linha
+// 🎨 Custom Painter para o gráfico de linha - MELHORADO
 class LineChartPainter extends CustomPainter {
   final List<Expense> expenses;
   final String period;
+  final Color primaryColor;
+  final double conversionRate;
+  final String currencySymbol;
 
-  LineChartPainter({required this.expenses, required this.period});
+  LineChartPainter({
+    required this.expenses,
+    required this.period,
+    required this.primaryColor,
+    required this.conversionRate,
+    required this.currencySymbol,
+  });
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -405,56 +555,77 @@ class LineChartPainter extends CustomPainter {
     Map<DateTime, double> dailyTotals = {};
 
     for (var expense in expenses) {
-      DateTime day = DateTime(expense.date.year, expense.date.month, expense.date.day);
-      dailyTotals[day] = (dailyTotals[day] ?? 0) + expense.amount;
+      DateTime day =
+      DateTime(expense.date.year, expense.date.month, expense.date.day);
+      dailyTotals[day] = (dailyTotals[day] ?? 0) + (expense.amount * conversionRate);
     }
+
+    if (dailyTotals.isEmpty) return;
 
     // Ordenar datas
     List<DateTime> sortedDates = dailyTotals.keys.toList()..sort();
 
-    if (sortedDates.isEmpty) return;
-
     // Encontrar valores máximos
     double maxAmount = dailyTotals.values.reduce((a, b) => a > b ? a : b);
+    if (maxAmount == 0) return;
 
-    // Configurar paint para linha
+    // Configurar paint
     final linePaint = Paint()
-      ..color = Colors.blue
+      ..color = primaryColor
       ..strokeWidth = 3
       ..style = PaintingStyle.stroke
       ..strokeCap = StrokeCap.round;
 
-    // Configurar paint para pontos
     final pointPaint = Paint()
-      ..color = Colors.blue
+      ..color = primaryColor
       ..style = PaintingStyle.fill;
 
-    // Configurar paint para área sob a linha
     final areaPaint = Paint()
-      ..color = Colors.blue.withOpacity(0.1)
+      ..color = primaryColor.withOpacity(0.15)
       ..style = PaintingStyle.fill;
+
+    final gridPaint = Paint()
+      ..color = Colors.grey.withOpacity(0.2)
+      ..strokeWidth = 1;
+
+    // Dimensões
+    double width = size.width;
+    double height = size.height;
+    double paddingLeft = 40;
+    double paddingRight = 20;
+    double paddingTop = 20;
+    double paddingBottom = 30;
+
+    double chartWidth = width - paddingLeft - paddingRight;
+    double chartHeight = height - paddingTop - paddingBottom;
+
+    // Desenhar grid horizontal
+    for (int i = 0; i <= 4; i++) {
+      double y = paddingTop + (chartHeight / 4) * i;
+      canvas.drawLine(
+        Offset(paddingLeft, y),
+        Offset(width - paddingRight, y),
+        gridPaint,
+      );
+    }
 
     // Calcular pontos
     List<Offset> points = [];
-    double width = size.width;
-    double height = size.height;
-    double padding = 20;
-
     for (int i = 0; i < sortedDates.length; i++) {
-      double x = padding + (i / (sortedDates.length - 1)) * (width - 2 * padding);
+      double x = paddingLeft + (i / (sortedDates.length - 1).clamp(1, 999)) * chartWidth;
       double amount = dailyTotals[sortedDates[i]]!;
-      double y = height - padding - (amount / maxAmount) * (height - 2 * padding);
+      double y = paddingTop + chartHeight - (amount / maxAmount) * chartHeight;
       points.add(Offset(x, y));
     }
 
     // Desenhar área sob a linha
     if (points.length > 1) {
       Path areaPath = Path();
-      areaPath.moveTo(points.first.dx, height - padding);
+      areaPath.moveTo(points.first.dx, height - paddingBottom);
       for (var point in points) {
         areaPath.lineTo(point.dx, point.dy);
       }
-      areaPath.lineTo(points.last.dx, height - padding);
+      areaPath.lineTo(points.last.dx, height - paddingBottom);
       areaPath.close();
       canvas.drawPath(areaPath, areaPaint);
     }
@@ -471,12 +642,49 @@ class LineChartPainter extends CustomPainter {
 
     // Desenhar pontos
     for (var point in points) {
-      canvas.drawCircle(point, 4, pointPaint);
-      canvas.drawCircle(point, 6, Paint()
-        ..color = Colors.blue.withOpacity(0.3)
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 2);
+      canvas.drawCircle(point, 5, pointPaint);
+      canvas.drawCircle(
+          point,
+          8,
+          Paint()
+            ..color = primaryColor.withOpacity(0.3)
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 2);
     }
+
+    // Labels
+    final textPainter = TextPainter(
+      textDirection: TextDirection.ltr,
+      textAlign: TextAlign.center,
+    );
+
+    // Label de valor máximo
+    textPainter.text = TextSpan(
+      text: '$currencySymbol${maxAmount.toStringAsFixed(0)}',
+      style: const TextStyle(
+        color: Colors.grey,
+        fontSize: 11,
+        fontWeight: FontWeight.w500,
+      ),
+    );
+    textPainter.layout();
+    textPainter.paint(
+        canvas, Offset(5, paddingTop - textPainter.height / 2));
+
+    // Label de valor zero
+    textPainter.text = TextSpan(
+      text: '${currencySymbol}0',
+      style: const TextStyle(
+        color: Colors.grey,
+        fontSize: 11,
+        fontWeight: FontWeight.w500,
+      ),
+    );
+    textPainter.layout();
+    textPainter.paint(
+        canvas,
+        Offset(5,
+            height - paddingBottom - textPainter.height / 2));
   }
 
   @override

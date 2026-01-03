@@ -1,66 +1,143 @@
-# 📱 Expense Tracker — Flutter App
+# Expense Tracker App 
 
-**Autor:** Gonçalo Soares  
-**Número:** a22306242
+**A Smart Financial Companion for Personal Expense Management.**
 
-Aplicação móvel para gestão de despesas, com sincronização em tempo real, estatísticas e conversão automática de moeda através de API externa.
+This Flutter application helps users track their daily expenses, manage budgets, and analyze spending habits with intuitive charts and reports. Built with a focus on privacy and usability, it features multi-currency support, dark mode, and offline-capable data management.
 
----
+### Demo Video 🎥
+[![Demo Video](https://img.youtube.com/vi/wXR3c0AHRn4/0.jpg)](https://youtu.be/wXR3c0AHRn4)
 
-## 🌐 Integração com API Externa
-A app utiliza a **Frankfurter API** para converter valores de **EUR → USD** ao visualizar os detalhes de uma despesa.  
-É gratuita, não requer autenticação e fornece dados fiáveis do Banco Central Europeu.  
-Se a API falhar, o valor original em euros é mantido.
+### Screenshots 📱
+| | | |
+|:---:|:---:|:---:|
+| ![Home](screenshots/home.png) | ![Statistics](screenshots/stats.png) | ![Budgets](screenshots/budgets.png) |
+| ![Details](screenshots/details.png) | ![PDF](screenshots/report.png) | |
 
----
+## Features List 
 
-## 🏠 Home Screen
-Ecrã principal para **visualização e gestão de todas as despesas**.
+### Core Features
+- **Expense Tracking**: Add, edit, and delete expenses with categories, descriptions, and amounts.
+- **Smart Filtering**: Filter expenses by date range, category, or search by keywords.
+- **Visual Analytics**: Interactive charts showing spending trends (Daily Average, Category Distribution).
+- **Multi-Currency Support**: Real-time currency conversion (EUR, USD, GBP, JPY, etc.) using live exchange rates.
+- **Budget Management**: Set monthly limits per category and track progress.
+- **Recurring Expenses**: Automatically generate recurring bills (Daily, Weekly, Monthly, Yearly).
+- **Receipt Attachments**: Attach photos to expenses (stored locally).
+- **Reports**: Export detailed expense reports to PDF and CSV.
 
-### **Principais Funcionalidades**
-- Lista de despesas com **categoria**, **descrição**, **valor (€)** e **data**.
-- Card com **total filtrado**.
-- **Filtros por categoria** (8 opções) e **intervalo de datas**.
-- Acesso rápido ao ecrã de estatísticas.
-- **Adicionar**, **editar** e **eliminar** despesas (com swipe e confirmação).
-- **Sincronização em tempo real** com Firestore.
-- Mensagem de *empty state* quando não existem dados.
+### Native & Advanced Features
+- **Dark Mode**: Fully adaptive UI for light and dark themes.
+- **Location Tagging**: Automatically saves GPS location for expenses (viewable in details).
+- **Biometric Authentication**: Secure login using Fingerprint/Face ID (Device dependent).
+- **Local Storage**: Images are compressed and stored locally on the device to ensure privacy and avoid cloud costs.
 
----
+## Architecture 
 
-## 📝 Expense Form Screen (Adicionar/Editar)
-Formulário para criar ou editar despesas.
+### Folder Structure
+```
+lib/
+├── models/         # Data classes (Expense, Budget, UserProfile)
+├── providers/      # State Management (AuthProvider, ExpenseProvider, SettingsProvider, BudgetProvider)
+├── screens/        # UI Screens (Home, Login, Settings, Statistics)
+├── services/       # External Integrations (Firestore, Currency, Storage, Reports)
+├── widgets/        # Reusable UI Components
+└── main.dart       # Entry point & App Config
+```
 
-### **Principais Funcionalidades**
-- Modo automático **Adicionar / Editar**.
-- Campos: categoria, descrição, valor (€), data.
-- **Validação completa** (descrição ≥ 3 caracteres, valor > 0, data válida).
-- Indicador de carregamento ao guardar.
-- **Feedback visual** (SnackBars de sucesso/erro).
-- Autofill dos campos em modo edição.
-- Botão dinâmico: *Add Expense* / *Update Expense*.
+### State Management
+The app uses the **Provider** pattern for state management:
+- **AuthProvider**: Manages Firebase Authentication state and user profile.
+- **ExpenseProvider**: Handles CRUD operations for expenses, syncing with Firestore, and managing Recurring logic.
+- **BudgetProvider**: Manages budget limits and tracks spending against them.
+- **SettingsProvider**: Controls global app settings like Theme and Currency.
 
----
+### Design Patterns
+- **Repository/Service Pattern**: Logic for data fetching (Firestore, APIs) is isolated in Services, keeping UI clean.
+- **Observer Pattern**: Providers notify listeners (UI) of state changes.
 
-## 📄 Expense Detail Screen
-Ecrã de detalhes com conversão de moeda integrada.
+## Setup Instructions 
 
-### **Principais Funcionalidades**
-- Card com categoria, descrição, data e valor em €.
-- Secção de **conversão EUR → USD** com loading e gestão de erros.
-- Valor convertido apresentado em **USD ($)**.
-- Botão de edição no AppBar.
-- Layout limpo e responsivo.
+### Prerequisites
+- Flutter SDK (>=3.0.0)
+- Firebase Account
+- Android Studio / VS Code
 
----
+### Installation
+1.  **Clone the repository**:
+    ```bash
+    git clone https://github.com/goncSoares/project2-expense-tracker.git
+    cd project2-expense-tracker
+    ```
+2.  **Install dependencies**:
+    ```bash
+    flutter pub get
+    ```
+3.  **Firebase Setup**:
+    - Project is configured for Firebase. Ensure `google-services.json` is present in `android/app`.
+    - Enable **Authentication** (Email/Password, Google).
+    - Enable **Firestore Database**.
+4.  **Run the App**:
+    ```bash
+    flutter run
+    ```
 
-## 📊 Statistics Screen
-Análise gráfica dos padrões de consumo.
+> **Note**: Biometric Authentication requires a real device or a generic emulator image with security configured. It may not work on all emulator instances.
 
-### **Principais Funcionalidades**
-- Seleção de período: **This Week**, **This Month**, **This Year**.
-- Card com total gasto e número de transações.
-- **Gráfico de linha** (Custom Painter) com tendência diária animada.
-- Cálculo da **média diária**.
-- Distribuição por categoria com barras de progresso e percentagens.
-- *Empty state* quando não existem despesas no período.
+## Firebase Configuration 
+
+### Firestore Collections
+- **`users/{userId}/profile`**: User profile data (displayName, email).
+- **`users/{userId}/settings`**: User preferences (currency, theme).
+- **`users/{userId}/expenses`**: Collection of Expense documents.
+- **`users/{userId}/budgets`**: Collection of Budget documents.
+
+### Storage
+- **Local Storage**: Unlike typical apps using Firebase Storage, this app purposely uses **Local Device Storage** (`path_provider`) for saving receipt images and profile pictures. This decision was made to avoid Firebase Storage costs (Credit Card requirement) and enhance user privacy. Backups are not synced to the cloud.
+
+### Security Rules
+Standard Firestore rules should be applied to allow users to access only their own data:
+```javascript
+match /users/{userId}/{document=**} {
+  allow read, write: if request.auth != null && request.auth.uid == userId;
+}
+```
+
+## API Documentation 
+
+### Currency Conversion
+- **Provider**: [Frankfurter API](https://www.frankfurter.app/)
+- **Endpoint**: `https://api.frankfurter.app/latest?from={from}&to={to}`
+- **Usage**: Converts expense amounts to the user's preferred display currency in real-time.
+- **Caching**: Rates are cached daily to minimize network requests.
+
+## Technologies Used 🛠️
+
+- **Flutter**: 3.x (Dart 3.x)
+- **Firebase**: Auth, Firestore
+- **Provider**: State Management
+- **HTTP**: API requests
+- **Geolocator**: GPS services
+- **Local Auth**: Biometrics
+- **Printing/PDF**: Report generation
+- **CSV**: Data export
+
+## Challenges & Solutions 
+
+### 1. Cloud Storage Restrictions
+**Challenge**: Firebase Storage requires a billing account (Credit Card), which was not available.
+**Solution**: Implemented a custom `StorageService` that saves images to the device's local file system. This required handling file permissions and path management manually but resulted in a cost-free solution.
+
+### 2. Complex State Dependencies
+**Challenge**: `ExpenseProvider` needed User ID from `AuthProvider`, and `BudgetProvider` needed data from `ExpenseProvider`.
+**Solution**: Used `ChangeNotifierProxyProvider` to inject dependencies dynamically, ensuring that Providers update correctly when Authentication state changes.
+
+### 3. Emulator Limitations
+**Challenge**: Biometric features are hard to test on standard emulators.
+**Solution**: Implemented graceful degradation. The app checks hardware availability (`canCheckBiometrics`) and hides the option if unsupported.
+
+
+## Credits 
+
+- **Currency API**: [Frankfurter](https://www.frankfurter.app/)
+- **Icons**: Material Design Icons
+- **Tutorials**: Flutter Documentation, Firebase Codelabs.

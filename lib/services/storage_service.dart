@@ -1,352 +1,381 @@
 import 'dart:io';
-import 'package:firebase_storage/firebase_storage.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter_image_compress/flutter_image_compress.dart';
+import 'package:uuid/uuid.dart';
 
+/// Local storage service with image compression and file management
 class StorageService {
-  final FirebaseStorage _storage = FirebaseStorage.instance;
-  final FirebaseAuth _auth = FirebaseAuth.instance;
+  final Uuid _uuid = const Uuid();
 
-  // ==================== PROFILE PICTURES ====================
+  /// Get base storage directory for user
+  Future<Directory> _getUserStorageDir(String userId) async {
+    final Directory appDir = await getApplicationDocumentsDirectory();
+    final String userPath = '${appDir.path}/users/$userId';
+    final Directory userDir = Directory(userPath);
 
-  /// Upload profile picture with progress tracking
-  /// Path: users/{userId}/profile/avatar.jpg
-  Future<String?> uploadProfilePicture(
-      File imageFile, {
-        Function(double)? onProgress,
-      }) async {
+    if (!await userDir.exists()) {
+      await userDir.create(recursive: true);
+    }
+
+    return userDir;
+  }
+
+  /// Compress image file before saving
+  Future<File?> _compressImage(File file, {int quality = 70}) async {
     try {
-      final userId = _auth.currentUser?.uid;
-      if (userId == null) {
-        throw Exception('No user logged in');
+      final String targetPath = '${file.parent.path}/compressed_${_uuid.v4()}.jpg';
+      
+      final XFile? compressedFile = await FlutterImageCompress.compressAndGetFile(
+        file.absolute.path,
+        targetPath,
+        quality: quality,
+        minWidth: 1024,
+        minHeight: 1024,
+        format: CompressFormat.jpeg,
+      );
+
+      if (compressedFile == null) {
+        print('⚠️ Compression failed, using original file');
+        return file;
       }
 
-      // User-specific directory
-      final String storagePath = 'users/$userId/profile/avatar.jpg';
-      final storageRef = _storage.ref().child(storagePath);
+      final File compressed = File(compressedFile.path);
+      final int originalSize = await file.length();
+      final int compressedSize = await compressed.length();
+      final double reduction = ((originalSize - compressedSize) / originalSize * 100);
 
-      // Upload with progress tracking
-      final uploadTask = storageRef.putFile(imageFile);
+      print('✅ Image compressed: ${(originalSize / 1024).toStringAsFixed(1)}KB → ${(compressedSize / 1024).toStringAsFixed(1)}KB (${reduction.toStringAsFixed(1)}% reduction)');
 
-      // Listen to progress
-      if (onProgress != null) {
-        uploadTask.snapshotEvents.listen((TaskSnapshot snapshot) {
-          final progress = snapshot.bytesTransferred / snapshot.totalBytes;
-          onProgress(progress);
-        });
-      }
-
-      // Wait for upload to complete
-      await uploadTask;
-
-      // Get download URL
-      final downloadUrl = await storageRef.getDownloadURL();
-
-      print('Profile picture uploaded: $downloadUrl');
-      return downloadUrl;
-    } on FirebaseException catch (e) {
-      print('Firebase upload error: ${e.message}');
-      throw Exception('Failed to upload profile picture: ${e.message}');
+      return compressed;
     } catch (e) {
-      print('Upload error: $e');
-      return null;
+      print('❌ Error compressing image: $e');
+      return file; // Return original if compression fails
     }
   }
 
-  /// Delete profile picture
-  Future<void> deleteProfilePicture() async {
-    try {
-      final userId = _auth.currentUser?.uid;
-      if (userId == null) return;
-
-      final String storagePath = 'users/$userId/profile/avatar.jpg';
-      await _storage.ref().child(storagePath).delete();
-
-      print('Profile picture deleted');
-    } on FirebaseException catch (e) {
-      if (e.code == 'object-not-found') {
-        print('Profile picture does not exist');
-        return;
-      }
-      print('Delete error: ${e.message}');
-    }
-  }
-
-  // ==================== EXPENSE RECEIPTS (items) ====================
-
-  /// Upload receipt image for expense
-  /// Path: users/{userId}/items/{expenseId}/receipt_{timestamp}.jpg
-  Future<String?> uploadReceiptImage({
-    required String expenseId,
-    required File imageFile,
-    Function(double)? onProgress,
+  /// Generic upload image method
+  /// [path] - Storage path relative to user directory (e.g., 'profile/avatar.jpg' or 'items/123/image.jpg')
+  /// [file] - Image file to upload
+  /// [onProgress] - Progress callback (0.0 to 1.0)
+  Future<String?> uploadImage(
+    String path,
+    File file, {
+    void Function(double)? onProgress,
   }) async {
     try {
-      final userId = _auth.currentUser?.uid;
-      if (userId == null) {
-        throw Exception('No user logged in');
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) throw Exception('User not authenticated');
+
+      onProgress?.call(0.1);
+
+      // Compress image
+      final File? compressedFile = await _compressImage(file);
+      if (compressedFile == null) throw Exception('Image compression failed');
+
+      onProgress?.call(0.5);
+
+      // Get user storage directory
+      final Directory userDir = await _getUserStorageDir(user.uid);
+      final String filePath = '${userDir.path}/$path';
+
+      // Create parent directories if needed
+      final File targetFile = File(filePath);
+      if (!await targetFile.parent.exists()) {
+        await targetFile.parent.create(recursive: true);
       }
 
-      // Generate unique filename with timestamp
-      final String fileName = 'receipt_${DateTime.now().millisecondsSinceEpoch}.jpg';
+      onProgress?.call(0.7);
 
-      // User-specific directory structure: users/{userId}/items/{expenseId}/
-      final String storagePath = 'users/$userId/items/$expenseId/$fileName';
-      final storageRef = _storage.ref().child(storagePath);
+      // Copy compressed image to target location
+      final File savedFile = await compressedFile.copy(filePath);
 
-      // Upload with progress
-      final uploadTask = storageRef.putFile(imageFile);
-
-      // Track progress
-      if (onProgress != null) {
-        uploadTask.snapshotEvents.listen((TaskSnapshot snapshot) {
-          final progress = snapshot.bytesTransferred / snapshot.totalBytes;
-          onProgress(progress);
-        });
-      }
-
-      // Wait for completion
-      await uploadTask;
-
-      // Get download URL
-      final downloadUrl = await storageRef.getDownloadURL();
-
-      print('Receipt uploaded: $downloadUrl');
-      return downloadUrl;
-    } on FirebaseException catch (e) {
-      print('Firebase upload error: ${e.message}');
-      throw Exception('Failed to upload receipt: ${e.message}');
-    } catch (e) {
-      print('Upload error: $e');
-      return null;
-    }
-  }
-
-  /// Delete specific receipt image by URL
-  Future<void> deleteReceiptImage(String imageUrl) async {
-    try {
-      final ref = _storage.refFromURL(imageUrl);
-      await ref.delete();
-      print('Receipt deleted: $imageUrl');
-    } on FirebaseException catch (e) {
-      if (e.code == 'object-not-found') {
-        print('Receipt does not exist');
-        return;
-      }
-      print('Delete error: ${e.message}');
-    }
-  }
-
-  /// Delete all receipts for a specific expense (cleanup orphaned files)
-  /// Called when expense is deleted
-  Future<void> deleteExpenseReceipts(String expenseId) async {
-    try {
-      final userId = _auth.currentUser?.uid;
-      if (userId == null) return;
-
-      final String storagePath = 'users/$userId/items/$expenseId/';
-      final listResult = await _storage.ref().child(storagePath).listAll();
-
-      // Delete all files in the expense folder
-      for (var item in listResult.items) {
-        await item.delete();
-        print('Deleted: ${item.fullPath}');
-      }
-
-      print('All receipts deleted for expense: $expenseId');
-    } on FirebaseException catch (e) {
-      if (e.code == 'object-not-found') {
-        print('No receipts found for expense: $expenseId');
-        return;
-      }
-      print('Delete error: ${e.message}');
-    }
-  }
-
-  /// Get all receipt URLs for a specific expense
-  Future<List<String>> getExpenseReceipts(String expenseId) async {
-    try {
-      final userId = _auth.currentUser?.uid;
-      if (userId == null) return [];
-
-      final String storagePath = 'users/$userId/items/$expenseId/';
-      final listResult = await _storage.ref().child(storagePath).listAll();
-
-      List<String> urls = [];
-      for (var item in listResult.items) {
-        final url = await item.getDownloadURL();
-        urls.add(url);
-      }
-
-      print('Found ${urls.length} receipts for expense: $expenseId');
-      return urls;
-    } on FirebaseException catch (e) {
-      print('Get receipts error: ${e.message}');
-      return [];
-    }
-  }
-
-  // ==================== GENERIC METHODS (Required in spec) ====================
-
-  /// Generic upload image method with progress
-  Future<String?> uploadImage(
-      String path,
-      File file, {
-        Function(double)? onProgress,
-      }) async {
-    try {
-      final ref = _storage.ref().child(path);
-      final uploadTask = ref.putFile(file);
-
-      // Progress tracking
-      if (onProgress != null) {
-        uploadTask.snapshotEvents.listen((TaskSnapshot snapshot) {
-          final progress = snapshot.bytesTransferred / snapshot.totalBytes;
-          onProgress(progress);
-        });
-      }
-
-      // Wait for upload
-      await uploadTask;
-
-      // Get URL
-      final downloadUrl = await ref.getDownloadURL();
-      return downloadUrl;
-    } on FirebaseException catch (e) {
-      print('Upload failed: ${e.message}');
-      throw Exception('Upload failed: ${e.message}');
-    }
-  }
-
-  /// Generic delete image method
-  Future<void> deleteImage(String path) async {
-    try {
-      await _storage.ref().child(path).delete();
-      print('Image deleted: $path');
-    } on FirebaseException catch (e) {
-      if (e.code == 'object-not-found') {
-        print('Image not found: $path');
-        return;
-      }
-      print('Delete failed: ${e.message}');
-    }
-  }
-
-  /// Get all images for a user (all directories)
-  Future<List<String>> getUserImages(String userId) async {
-    try {
-      final String storagePath = 'users/$userId/';
-      final listResult = await _storage.ref().child(storagePath).listAll();
-
-      List<String> urls = [];
-
-      // Get all files in root user directory
-      for (var item in listResult.items) {
-        final url = await item.getDownloadURL();
-        urls.add(url);
-      }
-
-      // Get files from subdirectories (profile, items)
-      for (var prefix in listResult.prefixes) {
-        final subResult = await _getAllFilesInDirectory(prefix);
-        urls.addAll(subResult);
-      }
-
-      print('Found ${urls.length} total images for user: $userId');
-      return urls;
-    } on FirebaseException catch (e) {
-      print('Get user images error: ${e.message}');
-      return [];
-    }
-  }
-
-  /// Helper: Get all files in directory recursively
-  Future<List<String>> _getAllFilesInDirectory(Reference dirRef) async {
-    List<String> urls = [];
-
-    final listResult = await dirRef.listAll();
-
-    // Get all files
-    for (var item in listResult.items) {
-      final url = await item.getDownloadURL();
-      urls.add(url);
-    }
-
-    // Recursively get files from subdirectories
-    for (var prefix in listResult.prefixes) {
-      final subUrls = await _getAllFilesInDirectory(prefix);
-      urls.addAll(subUrls);
-    }
-
-    return urls;
-  }
-
-  // ==================== CLEANUP & VALIDATION ====================
-
-  /// Delete all user data (GDPR compliance / account deletion)
-  Future<void> deleteAllUserData(String userId) async {
-    try {
-      final String storagePath = 'users/$userId/';
-      await _deleteDirectoryRecursive(storagePath);
-      print('All data deleted for user: $userId');
-    } catch (e) {
-      print('Delete user data error: $e');
-      throw Exception('Failed to delete user data: $e');
-    }
-  }
-
-  /// Helper: Delete directory recursively
-  Future<void> _deleteDirectoryRecursive(String path) async {
-    final dirRef = _storage.ref().child(path);
-    final listResult = await dirRef.listAll();
-
-    // Delete all files
-    for (var item in listResult.items) {
-      await item.delete();
-    }
-
-    // Delete subdirectories recursively
-    for (var prefix in listResult.prefixes) {
-      await _deleteDirectoryRecursive(prefix.fullPath);
-    }
-  }
-
-  /// Validate file is an image
-  bool isValidImageFile(File file) {
-    final validExtensions = ['.jpg', '.jpeg', '.png', '.heic', '.webp'];
-    final extension = file.path.toLowerCase().split('.').last;
-    return validExtensions.contains('.$extension');
-  }
-
-  /// Get file size in MB
-  Future<double> getFileSizeInMB(File file) async {
-    final bytes = await file.length();
-    return bytes / (1024 * 1024);
-  }
-
-  /// Cleanup orphaned files (files without corresponding Firestore documents)
-  /// Call this periodically or on app maintenance
-  Future<void> cleanupOrphanedFiles(List<String> activeExpenseIds) async {
-    try {
-      final userId = _auth.currentUser?.uid;
-      if (userId == null) return;
-
-      final String itemsPath = 'users/$userId/items/';
-      final listResult = await _storage.ref().child(itemsPath).listAll();
-
-      // Check each expense folder
-      for (var expenseFolder in listResult.prefixes) {
-        final expenseId = expenseFolder.name;
-
-        // If expense doesn't exist in Firestore, delete its files
-        if (!activeExpenseIds.contains(expenseId)) {
-          print('Cleaning up orphaned files for expense: $expenseId');
-          await deleteExpenseReceipts(expenseId);
+      // Clean up temporary compressed file if different from original
+      if (compressedFile.path != file.path) {
+        try {
+          await compressedFile.delete();
+        } catch (e) {
+          print('⚠️ Could not delete temp file: $e');
         }
       }
 
-      print('Cleanup completed');
+      onProgress?.call(1.0);
+
+      print('✅ Image saved: $filePath');
+      return savedFile.path;
     } catch (e) {
-      print('Cleanup error: $e');
+      print('❌ Error uploading image: $e');
+      return null;
+    }
+  }
+
+  /// Upload profile picture with compression
+  Future<String?> uploadProfilePicture(
+    File file, {
+    void Function(double)? onProgress,
+  }) async {
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) throw Exception('User not authenticated');
+
+      // Delete old profile picture first
+      await deleteProfilePicture(user.uid);
+
+      // Upload new one
+      return await uploadImage(
+        'profile/avatar.jpg',
+        file,
+        onProgress: onProgress,
+      );
+    } catch (e) {
+      print('❌ Error uploading profile picture: $e');
+      return null;
+    }
+  }
+
+  /// Upload item/expense image with compression
+  Future<String?> uploadItemImage(
+    String itemId,
+    File file, {
+    void Function(double)? onProgress,
+  }) async {
+    try {
+      final uniqueId = _uuid.v4().substring(0, 8);
+      final String path = 'items/$itemId/${uniqueId}_image.jpg';
+
+      return await uploadImage(
+        path,
+        file,
+        onProgress: onProgress,
+      );
+    } catch (e) {
+      print('❌ Error uploading item image: $e');
+      return null;
+    }
+  }
+
+  /// Delete image by path
+  Future<bool> deleteImage(String filePath) async {
+    try {
+      final File file = File(filePath);
+      if (await file.exists()) {
+        await file.delete();
+        print('✅ Image deleted: $filePath');
+
+        // Clean up empty parent directories
+        await _cleanupEmptyDirectories(file.parent);
+        return true;
+      }
+      print('⚠️ File not found: $filePath');
+      return false;
+    } catch (e) {
+      print('❌ Error deleting image: $e');
+      return false;
+    }
+  }
+
+  /// Delete user's profile picture
+  Future<bool> deleteProfilePicture(String userId) async {
+    try {
+      final Directory userDir = await _getUserStorageDir(userId);
+      final String profilePath = '${userDir.path}/profile/avatar.jpg';
+      return await deleteImage(profilePath);
+    } catch (e) {
+      print('❌ Error deleting profile picture: $e');
+      return false;
+    }
+  }
+
+  /// Delete all images for a specific item
+  Future<int> deleteItemImages(String itemId) async {
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) throw Exception('User not authenticated');
+
+      final Directory userDir = await _getUserStorageDir(user.uid);
+      final Directory itemDir = Directory('${userDir.path}/items/$itemId');
+
+      if (!await itemDir.exists()) {
+        print('⚠️ Item directory not found: ${itemDir.path}');
+        return 0;
+      }
+
+      int deletedCount = 0;
+      await for (final entity in itemDir.list()) {
+        if (entity is File) {
+          await entity.delete();
+          deletedCount++;
+        }
+      }
+
+      // Delete the item directory itself
+      await itemDir.delete();
+      print('✅ Deleted $deletedCount images for item $itemId');
+
+      return deletedCount;
+    } catch (e) {
+      print('❌ Error deleting item images: $e');
+      return 0;
+    }
+  }
+
+  /// Get all images for a user
+  Future<List<String>> getUserImages(String userId) async {
+    try {
+      final Directory userDir = await _getUserStorageDir(userId);
+      final List<String> imagePaths = [];
+
+      if (!await userDir.exists()) {
+        return imagePaths;
+      }
+
+      await for (final entity in userDir.list(recursive: true)) {
+        if (entity is File && _isImageFile(entity.path)) {
+          imagePaths.add(entity.path);
+        }
+      }
+
+      print('📁 Found ${imagePaths.length} images for user $userId');
+      return imagePaths;
+    } catch (e) {
+      print('❌ Error getting user images: $e');
+      return [];
+    }
+  }
+
+  /// Get all images for a specific item
+  Future<List<String>> getItemImages(String itemId) async {
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) throw Exception('User not authenticated');
+
+      final Directory userDir = await _getUserStorageDir(user.uid);
+      final Directory itemDir = Directory('${userDir.path}/items/$itemId');
+      final List<String> imagePaths = [];
+
+      if (!await itemDir.exists()) {
+        return imagePaths;
+      }
+
+      await for (final entity in itemDir.list()) {
+        if (entity is File && _isImageFile(entity.path)) {
+          imagePaths.add(entity.path);
+        }
+      }
+
+      print('📁 Found ${imagePaths.length} images for item $itemId');
+      return imagePaths;
+    } catch (e) {
+      print('❌ Error getting item images: $e');
+      return [];
+    }
+  }
+
+  /// Cleanup orphaned files (images for items that no longer exist)
+  /// [validItemIds] - List of item IDs that should have images
+  Future<int> cleanupOrphanedFiles(String userId, List<String> validItemIds) async {
+    try {
+      final Directory userDir = await _getUserStorageDir(userId);
+      final Directory itemsDir = Directory('${userDir.path}/items');
+
+      if (!await itemsDir.exists()) {
+        print('⚠️ Items directory not found');
+        return 0;
+      }
+
+      int deletedCount = 0;
+
+      await for (final entity in itemsDir.list()) {
+        if (entity is Directory) {
+          final String itemId = entity.path.split(Platform.pathSeparator).last;
+
+          // If this item ID is not in the valid list, delete it
+          if (!validItemIds.contains(itemId)) {
+            print('🗑️ Deleting orphaned files for item: $itemId');
+            await entity.delete(recursive: true);
+            deletedCount++;
+          }
+        }
+      }
+
+      print('✅ Cleaned up $deletedCount orphaned item directories');
+      return deletedCount;
+    } catch (e) {
+      print('❌ Error cleaning up orphaned files: $e');
+      return 0;
+    }
+  }
+
+  /// Get file size in bytes
+  Future<int> getFileSize(String filePath) async {
+    try {
+      final File file = File(filePath);
+      if (await file.exists()) {
+        return await file.length();
+      }
+      return 0;
+    } catch (e) {
+      print('❌ Error getting file size: $e');
+      return 0;
+    }
+  }
+
+  /// Get total storage used by user (in bytes)
+  Future<int> getTotalStorageUsed(String userId) async {
+    try {
+      final List<String> images = await getUserImages(userId);
+      int totalBytes = 0;
+
+      for (final imagePath in images) {
+        totalBytes += await getFileSize(imagePath);
+      }
+
+      print('📊 Total storage used: ${(totalBytes / 1024 / 1024).toStringAsFixed(2)} MB');
+      return totalBytes;
+    } catch (e) {
+      print('❌ Error calculating total storage: $e');
+      return 0;
+    }
+  }
+
+  /// Check if file exists
+  Future<bool> fileExists(String filePath) async {
+    try {
+      return await File(filePath).exists();
+    } catch (e) {
+      return false;
+    }
+  }
+
+  /// Helper: Check if file is an image based on extension
+  bool _isImageFile(String path) {
+    final String ext = path.toLowerCase();
+    return ext.endsWith('.jpg') ||
+        ext.endsWith('.jpeg') ||
+        ext.endsWith('.png') ||
+        ext.endsWith('.webp');
+  }
+
+  /// Helper: Clean up empty directories recursively
+  Future<void> _cleanupEmptyDirectories(Directory dir) async {
+    try {
+      if (!await dir.exists()) return;
+
+      final List<FileSystemEntity> contents = await dir.list().toList();
+
+      // If directory is empty, delete it
+      if (contents.isEmpty) {
+        await dir.delete();
+        print('🗑️ Removed empty directory: ${dir.path}');
+
+        // Recursively check parent directory
+        final Directory parent = dir.parent;
+        if (parent.path != (await getApplicationDocumentsDirectory()).path) {
+          await _cleanupEmptyDirectories(parent);
+        }
+      }
+    } catch (e) {
+      print('⚠️ Error cleaning up directory: $e');
     }
   }
 }

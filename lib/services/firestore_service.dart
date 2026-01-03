@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import '../models/expense.dart';
 import '../models/user_profile.dart';
 import '../models/user_settings.dart';
+import '../models/budget.dart';
 
 class FirestoreService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
@@ -245,6 +246,72 @@ class FirestoreService {
       await batch.commit();
     } on FirebaseException catch (e) {
       throw Exception('Failed to batch delete expenses: ${e.message}');
+    }
+  }
+  // ==================== BUDGETS ====================
+
+  /// Stream de orçamentos (real-time)
+  Stream<List<Budget>> getUserBudgets(String userId) {
+    return _firestore
+        .collection('users')
+        .doc(userId)
+        .collection('budgets')
+        .snapshots()
+        .map((snapshot) {
+      return snapshot.docs.map((doc) {
+        return Budget.fromFirestore(doc.data(), doc.id);
+      }).toList();
+    });
+  }
+
+  /// Definir orçamento (Criar ou Atualizar)
+  Future<void> setBudget(String userId, Budget budget) async {
+    try {
+      await _firestore
+          .collection('users')
+          .doc(userId)
+          .collection('budgets')
+          .doc(budget.category) // Usar categoria como ID para garantir unicidade
+          .set(budget.toFirestore());
+    } on FirebaseException catch (e) {
+      throw Exception('Failed to set budget: ${e.message}');
+    }
+  }
+
+  /// Eliminar orçamento
+  Future<void> deleteBudget(String userId, String budgetId) async {
+    try {
+      await _firestore
+          .collection('users')
+          .doc(userId)
+          .collection('budgets')
+          .doc(budgetId)
+          .delete();
+    } on FirebaseException catch (e) {
+      throw Exception('Failed to delete budget: ${e.message}');
+    }
+  }
+
+  /// Atualizar gasto do orçamento (chamado quando despesa é adicionada/removida)
+  Future<void> updateBudgetSpent(String userId, String category, double amountDelta) async {
+    try {
+      final docRef = _firestore
+          .collection('users')
+          .doc(userId)
+          .collection('budgets')
+          .doc(category);
+
+      await _firestore.runTransaction((transaction) async {
+        final snapshot = await transaction.get(docRef);
+        
+        if (snapshot.exists) {
+          double currentSpent = (snapshot.data()?['spent'] ?? 0).toDouble();
+          transaction.update(docRef, {'spent': currentSpent + amountDelta});
+        }
+      });
+    } catch (e) {
+      // Falha silenciosa se não houver orçamento para esta categoria
+      print('Middleware budget update failed (might be expected): $e');
     }
   }
 

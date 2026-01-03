@@ -1,11 +1,20 @@
 import 'package:flutter/material.dart';
 import '../models/expense.dart';
+import '../models/currency.dart';
 import '../services/currency_service.dart';
 import 'expense_form_screen.dart';
 
-class ExpenseDetailScreen extends StatelessWidget {
+class ExpenseDetailScreen extends StatefulWidget {
   final Expense expense;
   const ExpenseDetailScreen({super.key, required this.expense});
+
+  @override
+  State<ExpenseDetailScreen> createState() => _ExpenseDetailScreenState();
+}
+
+class _ExpenseDetailScreenState extends State<ExpenseDetailScreen> {
+  String _selectedCurrency = 'USD';
+  bool _isLoading = false;
 
   @override
   Widget build(BuildContext context) {
@@ -19,7 +28,7 @@ class ExpenseDetailScreen extends StatelessWidget {
               Navigator.pushReplacement(
                 context,
                 MaterialPageRoute(
-                  builder: (_) => ExpenseFormScreen(expense: expense),
+                  builder: (_) => ExpenseFormScreen(expense: widget.expense),
                 ),
               );
             },
@@ -45,7 +54,7 @@ class ExpenseDetailScreen extends StatelessWidget {
                         CircleAvatar(
                           radius: 25,
                           child: Icon(
-                            _getCategoryIcon(expense.category),
+                            _getCategoryIcon(widget.expense.category),
                             size: 28,
                           ),
                         ),
@@ -62,7 +71,7 @@ class ExpenseDetailScreen extends StatelessWidget {
                                 ),
                               ),
                               Text(
-                                expense.category,
+                                widget.expense.category,
                                 style: const TextStyle(
                                   fontSize: 20,
                                   fontWeight: FontWeight.bold,
@@ -85,7 +94,7 @@ class ExpenseDetailScreen extends StatelessWidget {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      expense.description,
+                      widget.expense.description,
                       style: const TextStyle(
                         fontSize: 18,
                       ),
@@ -102,7 +111,7 @@ class ExpenseDetailScreen extends StatelessWidget {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      '€${expense.amount.toStringAsFixed(2)}',
+                      '€${widget.expense.amount.toStringAsFixed(2)}',
                       style: TextStyle(
                         fontSize: 32,
                         fontWeight: FontWeight.bold,
@@ -125,7 +134,7 @@ class ExpenseDetailScreen extends StatelessWidget {
                         const Icon(Icons.calendar_today, size: 18),
                         const SizedBox(width: 8),
                         Text(
-                          '${expense.date.day}/${expense.date.month}/${expense.date.year}',
+                          '${widget.expense.date.day}/${widget.expense.date.month}/${widget.expense.date.year}',
                           style: const TextStyle(
                             fontSize: 18,
                           ),
@@ -134,7 +143,7 @@ class ExpenseDetailScreen extends StatelessWidget {
                     ),
 
                     // Location (if available)
-                    if (expense.latitude != null && expense.longitude != null) ...[
+                    if (widget.expense.latitude != null && widget.expense.longitude != null) ...[
                       const SizedBox(height: 20),
                       const Text(
                         'Location',
@@ -150,7 +159,7 @@ class ExpenseDetailScreen extends StatelessWidget {
                           const SizedBox(width: 8),
                           Expanded(
                             child: Text(
-                              '${expense.latitude!.toStringAsFixed(6)}, ${expense.longitude!.toStringAsFixed(6)}',
+                              '${widget.expense.latitude!.toStringAsFixed(6)}, ${widget.expense.longitude!.toStringAsFixed(6)}',
                               style: const TextStyle(fontSize: 14),
                             ),
                           ),
@@ -165,7 +174,7 @@ class ExpenseDetailScreen extends StatelessWidget {
             const SizedBox(height: 16),
 
             // Receipt Image (if available)
-            if (expense.receiptUrl != null && expense.receiptUrl!.isNotEmpty)
+            if (widget.expense.receiptUrl != null && widget.expense.receiptUrl!.isNotEmpty)
               Card(
                 elevation: 2,
                 child: Padding(
@@ -190,7 +199,7 @@ class ExpenseDetailScreen extends StatelessWidget {
                       ClipRRect(
                         borderRadius: BorderRadius.circular(8),
                         child: Image.network(
-                          expense.receiptUrl!,
+                          widget.expense.receiptUrl!,
                           fit: BoxFit.cover,
                           width: double.infinity,
                           loadingBuilder: (context, child, loadingProgress) {
@@ -220,7 +229,7 @@ class ExpenseDetailScreen extends StatelessWidget {
 
             const SizedBox(height: 16),
 
-            // Card de conversão de moeda
+            // Card de conversão de moeda - MELHORADO
             Card(
               elevation: 2,
               color: Colors.blue.shade50,
@@ -230,30 +239,60 @@ class ExpenseDetailScreen extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        Icon(Icons.currency_exchange,
-                          color: Colors.blue.shade700,
+                        Row(
+                          children: [
+                            Icon(Icons.currency_exchange,
+                              color: Colors.blue.shade700,
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              'Currency Conversion',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.blue.shade700,
+                              ),
+                            ),
+                          ],
                         ),
-                        const SizedBox(width: 8),
-                        Text(
-                          'Currency Conversion',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.blue.shade700,
-                          ),
+                        DropdownButton<String>(
+                          value: _selectedCurrency,
+                          underline: Container(),
+                          items: Currency.popular
+                              .where((c) => c.code != 'EUR')
+                              .map((currency) {
+                            return DropdownMenuItem(
+                              value: currency.code,
+                              child: Text('${currency.flag} ${currency.code}'),
+                            );
+                          }).toList(),
+                          onChanged: (value) {
+                            if (value != null) {
+                              setState(() {
+                                _selectedCurrency = value;
+                                _isLoading = true;
+                              });
+                              Future.delayed(const Duration(milliseconds: 300), () {
+                                if (mounted) {
+                                  setState(() => _isLoading = false);
+                                }
+                              });
+                            }
+                          },
                         ),
                       ],
                     ),
-                    const SizedBox(height: 12),
+                    const SizedBox(height: 16),
                     FutureBuilder<double>(
                       future: CurrencyService.convert(
-                        amount: expense.amount,
+                        amount: widget.expense.amount,
                         from: 'EUR',
-                        to: 'USD',
+                        to: _selectedCurrency,
                       ),
                       builder: (context, snapshot) {
-                        if (snapshot.connectionState == ConnectionState.waiting) {
+                        if (snapshot.connectionState == ConnectionState.waiting || _isLoading) {
                           return const Row(
                             children: [
                               SizedBox(
@@ -262,7 +301,7 @@ class ExpenseDetailScreen extends StatelessWidget {
                                 child: CircularProgressIndicator(strokeWidth: 2),
                               ),
                               SizedBox(width: 12),
-                              Text('Converting to USD...'),
+                              Text('Converting...'),
                             ],
                           );
                         } else if (snapshot.hasError) {
@@ -280,28 +319,83 @@ class ExpenseDetailScreen extends StatelessWidget {
                           );
                         } else {
                           final converted = snapshot.data!;
+                          final symbol = CurrencyService.getCurrencySymbol(_selectedCurrency);
+                          final cacheAge = CurrencyService.getCacheAgeMinutes();
+                          
                           return Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              const Text(
-                                'Value in USD',
-                                style: TextStyle(
+                              Text(
+                                'Value in $_selectedCurrency',
+                                style: const TextStyle(
                                   fontSize: 12,
                                   color: Colors.grey,
                                 ),
                               ),
                               const SizedBox(height: 4),
                               Text(
-                                '\$${converted.toStringAsFixed(2)}',
+                                '$symbol${converted.toStringAsFixed(2)}',
                                 style: const TextStyle(
-                                  fontSize: 24,
+                                  fontSize: 28,
                                   fontWeight: FontWeight.bold,
                                 ),
                               ),
+                              const SizedBox(height: 8),
+                              Text(
+                                'Rate: 1 EUR = ${(converted / widget.expense.amount).toStringAsFixed(4)} $_selectedCurrency',
+                                style: const TextStyle(
+                                  fontSize: 11,
+                                  color: Colors.grey,
+                                ),
+                              ),
+                              if (cacheAge != null)
+                                Text(
+                                  'Updated: ${cacheAge < 60 ? "$cacheAge min ago" : "${(cacheAge / 60).floor()}h ago"}',
+                                  style: const TextStyle(
+                                    fontSize: 11,
+                                    color: Colors.grey,
+                                  ),
+                                ),
                             ],
                           );
                         }
                       },
+                    ),
+                    const SizedBox(height: 16),
+                    const Divider(),
+                    const SizedBox(height: 8),
+                    const Text(
+                      'Quick Conversions',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.grey,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: ['USD', 'GBP', 'JPY', 'BRL'].map((code) {
+                        return FutureBuilder<double>(
+                          future: CurrencyService.convert(
+                            amount: widget.expense.amount,
+                            from: 'EUR',
+                            to: code,
+                          ),
+                          builder: (context, snapshot) {
+                            final symbol = CurrencyService.getCurrencySymbol(code);
+                            final amount = snapshot.data ?? 0;
+                            return Chip(
+                              avatar: Text(Currency.getByCode(code)?.flag ?? ''),
+                              label: Text('$symbol${amount.toStringAsFixed(2)}'),
+                              backgroundColor: code == _selectedCurrency 
+                                  ? Colors.blue.shade100 
+                                  : Colors.grey.shade100,
+                            );
+                          },
+                        );
+                      }).toList(),
                     ),
                   ],
                 ),

@@ -24,7 +24,7 @@ android {
 
     defaultConfig {
         applicationId = "com.example.expense_tracker"
-        minSdk = 23  // ← SÓ AQUI! Remove o outro
+        minSdk = flutter.minSdkVersion  // ← SÓ AQUI! Remove o outro
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
